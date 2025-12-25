@@ -1,0 +1,16 @@
+{
+    "name": "Dineo - Restaurant Ordering",
+    "short_name": "Dineo",
+    "description": "Fast and easy restaurant ordering.",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#ffffff",
+    "theme_color": "#d97706",
+    "icons": [
+        {
+            "src": "/icon.svg",
+            "sizes": "192x192 512x512",
+            "type": "image/svg+xml"
+        }
+    ]
+}

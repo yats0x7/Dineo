@@ -1,9 +1,27 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { useEffect } from 'react';
 
 export default function HomePage() {
   const router = useRouter();
+
+  useEffect(() => {
+    // Check for active order first - highest priority
+    const activeOrder = localStorage.getItem('dineo_active_order');
+    if (activeOrder && activeOrder !== 'null') {
+      router.push('/order-status');
+      return;
+    }
+
+    // Then check for table number
+    const tableNumber = localStorage.getItem('dineo_table_number');
+    if (tableNumber) {
+      router.push('/menu');
+    } else {
+      router.push('/table-entry');
+    }
+  }, []);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary/10 to-secondary flex flex-col items-center justify-center p-4">
@@ -20,15 +38,11 @@ export default function HomePage() {
       <div className="w-full max-w-sm rounded-3xl bg-card shadow-lg p-8 border border-border text-center">
         <h2 className="text-2xl font-bold text-foreground mb-4">Welcome!</h2>
         <p className="text-muted-foreground mb-6">
-          Order from our menu, track your order status, and enjoy delicious food in real-time.
+          Redirecting you to the right place...
         </p>
-
-        <button
-          onClick={() => router.push('/table-entry')}
-          className="w-full rounded-xl bg-primary px-4 py-3 font-bold text-primary-foreground transition-transform hover:scale-105 active:scale-95"
-        >
-          Start Ordering
-        </button>
+        <div className="flex justify-center">
+          <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full"></div>
+        </div>
       </div>
     </div>
   );

@@ -19,8 +19,8 @@ export default function OrderStatusPage() {
   const router = useRouter();
 
   useEffect(() => {
-    const stored = localStorage.getItem('currentOrder');
-    if (!stored) {
+    const stored = localStorage.getItem('dineo_active_order');
+    if (!stored || stored === 'null') {
       router.push('/');
       return;
     }
@@ -73,8 +73,8 @@ export default function OrderStatusPage() {
                     {/* Icon */}
                     <div
                       className={`flex h-10 w-10 items-center justify-center rounded-full transition-all ${isActive
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-secondary text-muted-foreground'
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-secondary text-muted-foreground'
                         } ${isCurrentStep ? 'ring-2 ring-primary ring-offset-2' : ''}`}
                     >
                       <Icon size={20} />
@@ -159,16 +159,45 @@ export default function OrderStatusPage() {
           </div>
         </div>
 
-        {/* Action Button */}
+        {/* Action Buttons */}
         {currentStatus === 'made' && (
+          <div className="space-y-3">
+            {/* Button 1: Order Again */}
+            <button
+              onClick={() => {
+                // Keep table, clear order & cart
+                localStorage.removeItem('dineo_active_order');
+                localStorage.removeItem('dineo_cart');
+                router.push('/menu');
+              }}
+              className="w-full rounded-lg bg-primary px-4 py-3 font-bold text-primary-foreground transition-transform hover:scale-105 active:scale-95"
+            >
+              Order Again
+            </button>
+
+            {/* Button 2: Go Home */}
+            <button
+              onClick={() => {
+                // Clear everything
+                localStorage.removeItem('dineo_table_number');
+                localStorage.removeItem('dineo_cart');
+                localStorage.removeItem('dineo_active_order');
+                router.push('/');
+              }}
+              className="w-full rounded-lg bg-secondary px-4 py-3 font-bold text-foreground transition-transform hover:scale-105 active:scale-95"
+            >
+              Go Home
+            </button>
+          </div>
+        )}
+
+        {/* While cooking/received - allow adding more items */}
+        {currentStatus !== 'made' && (
           <button
-            onClick={() => {
-              localStorage.removeItem('currentOrder');
-              router.push('/');
-            }}
-            className="w-full rounded-lg bg-primary px-4 py-3 font-bold text-primary-foreground transition-transform hover:scale-105 active:scale-95"
+            onClick={() => router.push('/menu')}
+            className="w-full rounded-lg bg-secondary px-4 py-3 font-bold text-foreground transition-transform hover:scale-105 active:scale-95"
           >
-            Back to Home
+            Add More Items
           </button>
         )}
       </div>

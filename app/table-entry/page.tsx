@@ -1,12 +1,20 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
 export default function TableEntry() {
   const [tableNumber, setTableNumber] = useState('');
   const [error, setError] = useState('');
   const router = useRouter();
+
+
+  useEffect(() => {
+    const storedTable = localStorage.getItem('dineo_table_number');
+    if (storedTable) {
+      router.push('/menu');
+    }
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -17,7 +25,7 @@ export default function TableEntry() {
       return;
     }
 
-    localStorage.setItem('tableNumber', tableNumber);
+    localStorage.setItem('dineo_table_number', tableNumber);
     router.push('/menu');
   };
 
