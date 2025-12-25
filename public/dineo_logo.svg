@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 60">
+  <rect width="60" height="60" rx="16" fill="#d97706" />
+  <path d="M20 15h12c7 0 12 5 12 12s-5 12-12 12h-12v-24z m8 16h4c3 0 5-2 5-4s-2-4-5-4h-4v8z" fill="white" />
+  <text x="75" y="42" font-family="Arial, sans-serif" font-weight="bold" font-size="32" fill="#2c1810">Dineo</text>
+</svg>

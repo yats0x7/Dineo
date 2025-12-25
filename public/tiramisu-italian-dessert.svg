@@ -1,0 +1,6 @@
+<svg width="400" height="300" xmlns="http://www.w3.org/2000/svg">
+  <rect width="100%" height="100%" fill="#f3e8dc"/>
+  <rect x="5" y="5" width="390" height="290" fill="none" stroke="#d97706" stroke-width="2"/>
+  <text x="50%" y="45%" font-family="Arial" font-size="24" font-weight="bold" fill="#2c1810" text-anchor="middle" dominant-baseline="middle">Tiramisu</text>
+  <text x="50%" y="65%" font-family="Arial" font-size="60" fill="#2c1810" text-anchor="middle" dominant-baseline="middle">🍽️</text>
+</svg>
