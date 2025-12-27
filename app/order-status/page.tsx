@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Check, Clock, ChefHat } from 'lucide-react';
+import { supabase } from '../../lib/supabase/client';
 
 interface Order {
   id: string;
@@ -19,6 +20,7 @@ export default function OrderStatusPage() {
   const router = useRouter();
 
   useEffect(() => {
+    // 1. Get saved order context
     const stored = localStorage.getItem('dineo_active_order');
     if (!stored || stored === 'null') {
       router.push('/');
@@ -27,15 +29,43 @@ export default function OrderStatusPage() {
 
     const orderData: Order = JSON.parse(stored);
     setOrder(orderData);
-    setCurrentStatus('received');
+    setCurrentStatus(orderData.status);
 
-    // Simulate status progression
-    const timer1 = setTimeout(() => setCurrentStatus('cooking'), 3000);
-    const timer2 = setTimeout(() => setCurrentStatus('made'), 6000);
+    // 2. Refresh status from DB immediately (in case page reloaded)
+    const fetchLatestStatus = async () => {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('status')
+        .eq('id', orderData.id)
+        .single();
+
+      if (data && !error) {
+        setCurrentStatus(data.status);
+      }
+    };
+    fetchLatestStatus();
+
+    // 3. Realtime Subscription
+    const channel = supabase
+      .channel('order_status_updates')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'orders',
+          filter: `id=eq.${orderData.id}`,
+        },
+        (payload) => {
+          const newStatus = payload.new.status;
+          console.log('Realtime update:', newStatus);
+          setCurrentStatus(newStatus);
+        }
+      )
+      .subscribe();
 
     return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
+      supabase.removeChannel(channel);
     };
   }, [router]);
 
@@ -56,7 +86,7 @@ export default function OrderStatusPage() {
           {/* Order ID */}
           <div className="text-center mb-8">
             <p className="text-muted-foreground text-sm uppercase tracking-wider">Order Number</p>
-            <p className="text-2xl font-bold text-foreground mt-1">{order.id}</p>
+            <p className="text-2xl font-bold text-foreground mt-1">{order.id.slice(0, 8) + '...'}</p>
             <p className="text-muted-foreground text-sm mt-2">Table #{order.tableNumber}</p>
           </div>
 
