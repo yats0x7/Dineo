@@ -21,6 +21,12 @@ interface CartItem extends MenuItem {
 
 const CATEGORIES = ['All', 'Starters', 'Main Course', 'Beverages', 'Desserts'];
 
+// Helper function to safely format prices
+const safePrice = (price: number | null | undefined): number => {
+  const parsed = Number(price);
+  return isNaN(parsed) || parsed < 0 ? 0 : parsed;
+};
+
 export default function MenuPage() {
   const [tableNumber, setTableNumber] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState('All');
@@ -71,18 +77,18 @@ export default function MenuPage() {
 
   const fetchMenu = async () => {
     try {
-      const { data, error } = await supabase.from('menus').select('*');
+      const { data, error } = await supabase.from('menu_items').select('*');
       if (error) throw error;
 
       if (data) {
         const mappedItems: MenuItem[] = data.map((item) => ({
           id: item.id,
-          name: item.name,
-          description: item.description,
-          price: item.price,
+          name: item.name || 'Unnamed Item',
+          description: item.description || '',
+          price: safePrice(item.price), // Defensive parsing
           image: item.image_url, // Mapping from DB column name
-          category: item.category,
-          isVeg: item.is_veg, // Mapping from DB column name
+          category: item.category || 'Other',
+          isVeg: item.is_veg ?? true, // Mapping from DB column name
         }));
         setMenuItems(mappedItems);
       }
@@ -147,7 +153,7 @@ export default function MenuPage() {
 
   const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
   const totalPrice = cart.reduce(
-    (sum, item) => sum + item.price * item.quantity,
+    (sum, item) => sum + safePrice(item.price) * item.quantity,
     0
   );
 
@@ -158,7 +164,21 @@ export default function MenuPage() {
     try {
       const finalTotal = totalPrice * 1.1; // Including tax
 
-      // 1. Insert Order
+
+      // 1. Fetch a valid chef_id to satisfy DB constraint
+      const { data: chefData, error: chefError } = await supabase
+        .from('menus')
+        .select('chef_id')
+        .limit(1)
+        .single();
+
+
+
+      if (chefError || !chefData?.chef_id) {
+        throw new Error('System Error: No available chef found (RLS or empty table).');
+      }
+
+      // 2. Insert Order
       const { data: orderData, error: orderError } = await supabase
         .from('orders')
         .insert([
@@ -166,6 +186,7 @@ export default function MenuPage() {
             table_number: tableNumber,
             status: 'received',
             total_amount: finalTotal,
+            chef_id: chefData.chef_id,
           },
         ])
         .select()
@@ -176,12 +197,12 @@ export default function MenuPage() {
 
       const orderId = orderData.id;
 
-      // 2. Insert Order Items
+      // 3. Insert Order Items
       const orderItems = cart.map((item) => ({
         order_id: orderId,
-        menu_id: item.id,
+        menu_item_id: item.id, // Corrected column name from menu_id to menu_item_id
         quantity: item.quantity,
-        price: item.price,
+        unit_price: item.price, // Mapping price to unit_price as required by DB schema
       }));
 
       const { error: itemsError } = await supabase
@@ -190,8 +211,7 @@ export default function MenuPage() {
 
       if (itemsError) throw itemsError;
 
-      // 3. Save to localStorage & Redirect
-      // Storing relevant details for the Order Status page
+      // 4. Save to localStorage & Redirect
       const activeOrder = {
         id: orderId,
         tableNumber,
@@ -205,11 +225,14 @@ export default function MenuPage() {
       localStorage.removeItem('dineo_cart');
       setCart([]);
       setShowReviewModal(false);
-      router.push('/order-status');
 
-    } catch (error) {
-      console.error('Error placing order:', error);
-      alert('Failed to place order. Please try again.');
+
+      window.location.href = '/order-status';
+
+    } catch (error: any) {
+      console.error('=== ORDER PLACEMENT ERROR ===');
+      console.error('Full error:', error);
+      alert(`Failed to place order. ${error.message || 'Please try again.'}`);
     } finally {
       setIsPlacingOrder(false);
     }
@@ -304,7 +327,7 @@ export default function MenuPage() {
 
                     <div className="mt-3 flex items-center justify-between">
                       <span className="font-bold text-primary text-lg">
-                        ₹{item.price.toFixed(2)}
+                        ₹{safePrice(item.price).toFixed(2)}
                       </span>
 
                       {/* Add / Quantity Controls */}
@@ -384,7 +407,7 @@ export default function MenuPage() {
                     {item.name} x{item.quantity}
                   </span>
                   <span className="font-semibold text-foreground">
-                    ₹{(item.price * item.quantity).toFixed(2)}
+                    ₹{(safePrice(item.price) * item.quantity).toFixed(2)}
                   </span>
                 </div>
               ))}
@@ -448,7 +471,7 @@ export default function MenuPage() {
                             {item.name}
                           </h4>
                           <p className="text-sm text-muted-foreground">
-                            ₹{item.price.toFixed(2)} each
+                            ₹{safePrice(item.price).toFixed(2)} each
                           </p>
                         </div>
                         <div className="flex items-center gap-3">
