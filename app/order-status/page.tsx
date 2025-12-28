@@ -10,13 +10,13 @@ interface Order {
   tableNumber: string;
   items: any[];
   totalPrice: number;
-  status: 'received' | 'cooking' | 'made';
+  status: 'received' | 'preparing' | 'ready' | 'completed';
   timestamp: string;
 }
 
 export default function OrderStatusPage() {
   const [order, setOrder] = useState<Order | null>(null);
-  const [currentStatus, setCurrentStatus] = useState<'received' | 'cooking' | 'made'>('received');
+  const [currentStatus, setCurrentStatus] = useState<'received' | 'preparing' | 'ready' | 'completed'>('received');
   const router = useRouter();
 
   useEffect(() => {
@@ -33,19 +33,29 @@ export default function OrderStatusPage() {
 
     // 2. Refresh status from DB immediately (in case page reloaded)
     const fetchLatestStatus = async () => {
-      const { data, error } = await supabase
-        .from('orders')
-        .select('status')
-        .eq('id', orderData.id)
-        .single();
+      try {
+        const { data, error } = await supabase
+          .from('orders')
+          .select('status')
+          .eq('id', orderData.id)
+          .single();
 
-      if (data && !error) {
-        setCurrentStatus(data.status);
+        if (data && !error) {
+          setCurrentStatus(data.status);
+        }
+      } catch (err) {
+        console.error('Error fetching status:', err);
       }
     };
     fetchLatestStatus();
 
-    // 3. Realtime Subscription
+    // 3. Polling Fallback - Fetch status every 5 seconds
+    // This ensures updates work even if realtime isn't enabled
+    const pollingInterval = setInterval(() => {
+      fetchLatestStatus();
+    }, 5000); // Poll every 5 seconds
+
+    // 4. Realtime Subscription (as primary method)
     const channel = supabase
       .channel('order_status_updates')
       .on(
@@ -58,13 +68,23 @@ export default function OrderStatusPage() {
         },
         (payload) => {
           const newStatus = payload.new.status;
-          console.log('Realtime update:', newStatus);
+          console.log('✅ Realtime update received:', newStatus);
           setCurrentStatus(newStatus);
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        // Log subscription status for debugging
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Realtime subscription active');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.warn('⚠️  Realtime subscription failed, using polling fallback');
+        } else if (status === 'TIMED_OUT') {
+          console.warn('⚠️  Realtime subscription timed out, using polling fallback');
+        }
+      });
 
     return () => {
+      clearInterval(pollingInterval);
       supabase.removeChannel(channel);
     };
   }, [router]);
@@ -73,8 +93,9 @@ export default function OrderStatusPage() {
 
   const statusSteps = [
     { status: 'received' as const, label: 'Order Received', icon: Check, color: 'text-primary' },
-    { status: 'cooking' as const, label: 'Cooking', icon: ChefHat, color: 'text-primary' },
-    { status: 'made' as const, label: 'Ready', icon: Check, color: 'text-primary' },
+    { status: 'preparing' as const, label: 'Preparing', icon: ChefHat, color: 'text-primary' },
+    { status: 'ready' as const, label: 'Ready for Pickup', icon: Check, color: 'text-primary' },
+    { status: 'completed' as const, label: 'Completed', icon: Check, color: 'text-primary' },
   ];
 
   return (
@@ -147,20 +168,26 @@ export default function OrderStatusPage() {
           <div className="rounded-xl bg-secondary p-4 text-center">
             {currentStatus === 'received' && (
               <div>
-                <p className="text-sm text-muted-foreground">Estimated Time</p>
-                <p className="text-lg font-bold text-foreground mt-1">~15 minutes</p>
+                <p className="text-sm text-muted-foreground">⏳ Order received!</p>
+                <p className="text-lg font-bold text-foreground mt-1">Waiting for chef to accept...</p>
               </div>
             )}
-            {currentStatus === 'cooking' && (
+            {currentStatus === 'preparing' && (
               <div>
-                <p className="text-sm text-muted-foreground">Currently Cooking</p>
-                <p className="text-lg font-bold text-foreground mt-1">~8 minutes remaining</p>
+                <p className="text-sm text-muted-foreground">🍳 Your order is being prepared!</p>
+                <p className="text-lg font-bold text-foreground mt-1">~10 minutes remaining</p>
               </div>
             )}
-            {currentStatus === 'made' && (
+            {currentStatus === 'ready' && (
               <div>
-                <p className="text-lg font-bold text-primary">Your order is ready!</p>
+                <p className="text-lg font-bold text-primary">✅ Your order is ready for pickup!</p>
                 <p className="text-sm text-muted-foreground mt-1">Please collect from counter</p>
+              </div>
+            )}
+            {currentStatus === 'completed' && (
+              <div>
+                <p className="text-lg font-bold text-primary">Order completed. Thank you!</p>
+                <p className="text-sm text-muted-foreground mt-1">We hope you enjoyed your meal</p>
               </div>
             )}
           </div>
@@ -190,7 +217,7 @@ export default function OrderStatusPage() {
         </div>
 
         {/* Action Buttons */}
-        {currentStatus === 'made' && (
+        {(currentStatus === 'ready' || currentStatus === 'completed') && (
           <div className="space-y-3">
             {/* Button 1: Order Again */}
             <button
@@ -222,7 +249,7 @@ export default function OrderStatusPage() {
         )}
 
         {/* While cooking/received - allow adding more items */}
-        {currentStatus !== 'made' && (
+        {(currentStatus === 'received' || currentStatus === 'preparing') && (
           <button
             onClick={() => router.push('/menu')}
             className="w-full rounded-lg bg-secondary px-4 py-3 font-bold text-foreground transition-transform hover:scale-105 active:scale-95"
