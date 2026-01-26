@@ -36,6 +36,7 @@ export default function MenuPage() {
   const [isLoaded, setIsLoaded] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
+  const [specialInstructions, setSpecialInstructions] = useState('');
   const router = useRouter();
 
   useEffect(() => {
@@ -187,6 +188,7 @@ export default function MenuPage() {
             status: 'received',
             total_amount: finalTotal,
             chef_id: chefData.chef_id,
+            special_instructions: specialInstructions || null,
           },
         ])
         .select()
@@ -224,6 +226,7 @@ export default function MenuPage() {
       localStorage.setItem('dineo_active_order', JSON.stringify(activeOrder));
       localStorage.removeItem('dineo_cart');
       setCart([]);
+      setSpecialInstructions('');
       setShowReviewModal(false);
 
 
@@ -526,6 +529,29 @@ export default function MenuPage() {
                     <span className="text-primary">
                       ₹{(totalPrice * 1.1).toFixed(2)}
                     </span>
+                  </div>
+                </div>
+
+                {/* Special Instructions Input */}
+                <div className="space-y-2 border-t border-border pt-4">
+                  <label htmlFor="instructions" className="text-sm font-semibold text-foreground">
+                    Instructions for Chef (optional)
+                  </label>
+                  <textarea
+                    id="instructions"
+                    value={specialInstructions}
+                    onChange={(e) => {
+                      if (e.target.value.length <= 250) {
+                        setSpecialInstructions(e.target.value);
+                      }
+                    }}
+                    placeholder="E.g. No onion, less spicy, extra cheese..."
+                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 resize-none"
+                    rows={3}
+                    maxLength={250}
+                  />
+                  <div className="text-xs text-muted-foreground text-right">
+                    {specialInstructions.length}/250
                   </div>
                 </div>
 
