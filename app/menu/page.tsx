@@ -13,6 +13,10 @@ interface MenuItem {
   image: string;
   category: string;
   isVeg: boolean;
+  offer?: {
+    discount_type: 'percent' | 'flat';
+    discount_value: number;
+  };
 }
 
 interface CartItem extends MenuItem {
@@ -78,24 +82,72 @@ export default function MenuPage() {
 
   const fetchMenu = async () => {
     try {
-      const { data, error } = await supabase.from('menu_items').select('*');
-      if (error) throw error;
+      // Fetch menu items with active offers
+      const { data, error } = await supabase
+        .from('menu_items')
+        .select(`
+          *,
+          item_offers!inner (
+            discount_type,
+            discount_value,
+            active,
+            start_date,
+            end_date
+          )
+        `);
 
-      if (data) {
-        const mappedItems: MenuItem[] = data.map((item) => ({
+      // Also fetch items without offers
+      const { data: itemsWithoutOffers, error: noOffersError } = await supabase
+        .from('menu_items')
+        .select('*');
+
+      if (error && noOffersError) throw error || noOffersError;
+
+      // Merge results
+      const allItems = itemsWithoutOffers || [];
+      const itemsWithActiveOffers = data || [];
+
+      const now = new Date();
+
+      const mappedItems: MenuItem[] = allItems.map((item) => {
+        // Find active offer for this item
+        const itemWithOffer = itemsWithActiveOffers.find(i => i.id === item.id);
+
+        let offer = undefined;
+        if (itemWithOffer && itemWithOffer.item_offers) {
+          const offerData = Array.isArray(itemWithOffer.item_offers)
+            ? itemWithOffer.item_offers[0]
+            : itemWithOffer.item_offers;
+
+          // Check if offer is active and within date range
+          if (offerData?.active) {
+            const startDate = new Date(offerData.start_date);
+            const endDate = new Date(offerData.end_date);
+
+            if (now >= startDate && now <= endDate) {
+              offer = {
+                discount_type: offerData.discount_type,
+                discount_value: offerData.discount_value
+              };
+            }
+          }
+        }
+
+        return {
           id: item.id,
           name: item.name || 'Unnamed Item',
           description: item.description || '',
-          price: safePrice(item.price), // Defensive parsing
-          image: item.image_url, // Mapping from DB column name
+          price: safePrice(item.price),
+          image: item.image_url,
           category: item.category || 'Other',
-          isVeg: item.is_veg ?? true, // Mapping from DB column name
-        }));
-        setMenuItems(mappedItems);
-      }
+          isVeg: item.is_veg ?? true,
+          offer
+        };
+      });
+
+      setMenuItems(mappedItems);
     } catch (error) {
       console.error('Error fetching menu:', error);
-      // Fallback or empty state could be handled here
     } finally {
       setIsLoaded(true);
     }
@@ -153,33 +205,85 @@ export default function MenuPage() {
   };
 
   const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
-  const totalPrice = cart.reduce(
-    (sum, item) => sum + safePrice(item.price) * item.quantity,
-    0
-  );
+
+  // Calculate total with item discounts applied
+  const itemsWithDiscounts = cart.map(item => {
+    if (item.offer) {
+      const discount = item.offer.discount_type === 'percent'
+        ? (item.price * item.offer.discount_value) / 100
+        : item.offer.discount_value;
+      const discountedPrice = Math.max(0, item.price - discount);
+      return { ...item, discountedPrice, itemDiscount: discount };
+    }
+    return { ...item, discountedPrice: item.price, itemDiscount: 0 };
+  });
+
+  // Subtotal after item discounts
+  const totalBeforeOffers = cart.reduce((sum, item) => sum + safePrice(item.price) * item.quantity, 0);
+  const totalItemDiscounts = itemsWithDiscounts.reduce((sum, item) => sum + item.itemDiscount * item.quantity, 0);
+  const totalPrice = itemsWithDiscounts.reduce((sum, item) => sum + item.discountedPrice * item.quantity, 0);
 
   const placeOrder = async () => {
     if (!tableNumber) return;
     setIsPlacingOrder(true);
 
     try {
-      const finalTotal = totalPrice * 1.1; // Including tax
+      // 1. Check if user is authenticated
+      const { data: { user } } = await supabase.auth.getUser();
 
+      // 2. Fetch restaurant settings for tax calculation
+      const { data: settingsData, error: settingsError } = await supabase
+        .from('restaurant_settings')
+        .select('gst_percent, service_charge_percent, tax_enabled')
+        .single();
 
-      // 1. Fetch a valid chef_id to satisfy DB constraint
+      if (settingsError) {
+        console.warn('No settings found, using defaults');
+      }
+
+      const gstPercent = settingsData?.gst_percent || 10;
+      const servicePercent = settingsData?.service_charge_percent || 0;
+      const taxEnabled = settingsData?.tax_enabled ?? true;
+
+      // 3. Calculate with proper order: item discounts → bill offer → tax
+      // Step 1 & 2: Already calculated in itemsWithDiscounts (totalPrice = subtotal after item discounts)
+      const subtotal = totalPrice;
+
+      // Step 3: Fetch and apply bill offer
+      const { data: billOfferData } = await supabase
+        .from('bill_offers')
+        .select('*')
+        .eq('active', true)
+        .gte('end_date', new Date().toISOString())
+        .lte('start_date', new Date().toISOString())
+        .single();
+
+      let billDiscount = 0;
+      if (billOfferData && subtotal >= billOfferData.min_order_value) {
+        billDiscount = billOfferData.discount_type === 'percent'
+          ? (subtotal * billOfferData.discount_value) / 100
+          : billOfferData.discount_value;
+      }
+
+      const subtotalAfterBillDiscount = subtotal - billDiscount;
+
+      // Step 4: Apply tax to final amount
+      const gstAmount = taxEnabled ? (subtotalAfterBillDiscount * (gstPercent / 100)) : 0;
+      const serviceAmount = taxEnabled ? (subtotalAfterBillDiscount * (servicePercent / 100)) : 0;
+      const finalTotal = subtotalAfterBillDiscount + gstAmount + serviceAmount;
+
+      // 3. Fetch a valid chef_id to satisfy DB constraint
       const { data: chefData, error: chefError } = await supabase
         .from('menus')
         .select('chef_id')
         .limit(1)
         .single();
 
-
-
       if (chefError || !chefData?.chef_id) {
         throw new Error('System Error: No available chef found (RLS or empty table).');
       }
 
-      // 2. Insert Order
+      // 4. Insert Order
       const { data: orderData, error: orderError } = await supabase
         .from('orders')
         .insert([
@@ -189,6 +293,7 @@ export default function MenuPage() {
             total_amount: finalTotal,
             chef_id: chefData.chef_id,
             special_instructions: specialInstructions || null,
+            user_id: user?.id || null, // Link to authenticated user if exists
           },
         ])
         .select()
@@ -199,12 +304,12 @@ export default function MenuPage() {
 
       const orderId = orderData.id;
 
-      // 3. Insert Order Items
+      // 5. Insert Order Items
       const orderItems = cart.map((item) => ({
         order_id: orderId,
-        menu_item_id: item.id, // Corrected column name from menu_id to menu_item_id
+        menu_item_id: item.id,
         quantity: item.quantity,
-        unit_price: item.price, // Mapping price to unit_price as required by DB schema
+        unit_price: item.price,
       }));
 
       const { error: itemsError } = await supabase
@@ -213,13 +318,13 @@ export default function MenuPage() {
 
       if (itemsError) throw itemsError;
 
-      // 4. Save to localStorage & Redirect
+      // 6. Save to localStorage & Redirect
       const activeOrder = {
         id: orderId,
         tableNumber,
         status: 'received',
         totalPrice: finalTotal,
-        items: cart, // Keeping items for display
+        items: cart,
         timestamp: new Date().toISOString()
       };
 
@@ -228,7 +333,6 @@ export default function MenuPage() {
       setCart([]);
       setSpecialInstructions('');
       setShowReviewModal(false);
-
 
       window.location.href = '/order-status';
 
@@ -315,6 +419,14 @@ export default function MenuPage() {
                     <div className="absolute top-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-white text-xs font-bold">
                       {item.isVeg ? '🌱' : '🍖'}
                     </div>
+                    {/* Offer Badge */}
+                    {item.offer && (
+                      <div className="absolute top-2 left-2 bg-gradient-to-r from-orange-500 to-red-500 text-white px-2 py-1 rounded-md text-xs font-bold shadow-md">
+                        {item.offer.discount_type === 'percent'
+                          ? `${item.offer.discount_value}% OFF`
+                          : `₹${item.offer.discount_value} OFF`}
+                      </div>
+                    )}
                   </div>
 
                   {/* Content */}
@@ -329,9 +441,28 @@ export default function MenuPage() {
                     </div>
 
                     <div className="mt-3 flex items-center justify-between">
-                      <span className="font-bold text-primary text-lg">
-                        ₹{safePrice(item.price).toFixed(2)}
-                      </span>
+                      {/* Price with Discount */}
+                      <div className="flex flex-col gap-0.5">
+                        {item.offer ? (
+                          <>
+                            <span className="text-xs text-muted-foreground line-through">
+                              ₹{safePrice(item.price).toFixed(2)}
+                            </span>
+                            <span className="font-bold text-primary text-lg">
+                              ₹{(() => {
+                                const discount = item.offer.discount_type === 'percent'
+                                  ? (item.price * item.offer.discount_value) / 100
+                                  : item.offer.discount_value;
+                                return Math.max(0, item.price - discount).toFixed(2);
+                              })()}
+                            </span>
+                          </>
+                        ) : (
+                          <span className="font-bold text-primary text-lg">
+                            ₹{safePrice(item.price).toFixed(2)}
+                          </span>
+                        )}
+                      </div>
 
                       {/* Add / Quantity Controls */}
                       {quantity === 0 ? (
