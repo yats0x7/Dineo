@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ShoppingCart, Plus, Minus, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase/client';
+import { OTPLoginModal } from '../../components/OTPLoginModal';
 
 interface MenuItem {
   id: string;
@@ -37,9 +38,11 @@ export default function MenuPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [showReviewModal, setShowReviewModal] = useState(false);
+  const [showOTPModal, setShowOTPModal] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [specialInstructions, setSpecialInstructions] = useState('');
   const router = useRouter();
 
@@ -57,28 +60,10 @@ export default function MenuPage() {
     };
   }, []);
 
-  useEffect(() => {
-    // Load state from localStorage on mount
-    const storedTable = localStorage.getItem('dineo_table_number');
-    const storedCart = localStorage.getItem('dineo_cart');
-
-    if (!storedTable) {
-      router.push('/table-entry');
-      return;
-    }
-
-    setTableNumber(storedTable);
-
-    if (storedCart) {
-      try {
-        setCart(JSON.parse(storedCart));
-      } catch (e) {
-        console.error('Failed to parse cart', e);
-      }
-    }
-
-    fetchMenu();
-  }, [router]);
+  const checkAuthStatus = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    setIsAuthenticated(!!user);
+  };
 
   const fetchMenu = async () => {
     try {
@@ -154,6 +139,30 @@ export default function MenuPage() {
   };
 
   useEffect(() => {
+    // Load state from localStorage on mount
+    const storedTable = localStorage.getItem('dineo_table_number');
+    const storedCart = localStorage.getItem('dineo_cart');
+
+    if (!storedTable) {
+      router.push('/table-entry');
+      return;
+    }
+
+    setTableNumber(storedTable);
+
+    if (storedCart) {
+      try {
+        setCart(JSON.parse(storedCart));
+      } catch (e) {
+        console.error('Failed to parse cart', e);
+      }
+    }
+
+    fetchMenu();
+    checkAuthStatus();
+  }, [router]);
+
+  useEffect(() => {
     if (isLoaded) {
       localStorage.setItem('dineo_cart', JSON.stringify(cart));
     }
@@ -223,13 +232,38 @@ export default function MenuPage() {
   const totalItemDiscounts = itemsWithDiscounts.reduce((sum, item) => sum + item.itemDiscount * item.quantity, 0);
   const totalPrice = itemsWithDiscounts.reduce((sum, item) => sum + item.discountedPrice * item.quantity, 0);
 
+  const handleOTPSuccess = (userId: string) => {
+    setShowOTPModal(false);
+    setIsAuthenticated(true);
+    // Immediately show review modal after successful OTP
+    setShowReviewModal(true);
+  };
+
+  const handlePlaceOrderClick = async () => {
+    // Check if user is authenticated before showing review modal
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (!user) {
+      // Not authenticated, show OTP modal first
+      setShowOTPModal(true);
+    } else {
+      // Already authenticated, proceed to review modal
+      setShowReviewModal(true);
+    }
+  };
+
   const placeOrder = async () => {
     if (!tableNumber) return;
     setIsPlacingOrder(true);
 
     try {
-      // 1. Check if user is authenticated
+      // 1. CRITICAL: Ensure user is authenticated
       const { data: { user } } = await supabase.auth.getUser();
+
+      if (!user) {
+        // This shouldn't happen if flow is correct, but safety check
+        throw new Error('Please login to place order');
+      }
 
       // 2. Fetch restaurant settings for tax calculation
       const { data: settingsData, error: settingsError } = await supabase
@@ -513,7 +547,7 @@ export default function MenuPage() {
           <div className="fixed bottom-0 left-0 right-0 border-t border-border bg-card shadow-2xl md:hidden">
             <div className="mx-auto max-w-4xl px-4 py-4">
               <button
-                onClick={() => setShowReviewModal(true)}
+                onClick={handlePlaceOrderClick}
                 className="flex w-full items-center justify-between rounded-lg bg-primary px-4 py-3 font-semibold text-primary-foreground transition-transform hover:scale-105 active:scale-95"
               >
                 <div className="flex items-center gap-2">
@@ -553,7 +587,7 @@ export default function MenuPage() {
               </div>
             </div>
             <button
-              onClick={() => setShowReviewModal(true)}
+              onClick={handlePlaceOrderClick}
               className="w-full rounded-lg bg-primary px-4 py-2 font-semibold text-primary-foreground transition-transform hover:scale-105 active:scale-95"
             >
               Review Order
@@ -712,6 +746,13 @@ export default function MenuPage() {
           </div>
         )
       }
+
+      {/* OTP Login Modal */}
+      <OTPLoginModal
+        isOpen={showOTPModal}
+        onClose={() => setShowOTPModal(false)}
+        onSuccess={handleOTPSuccess}
+      />
     </div>
   );
 }
