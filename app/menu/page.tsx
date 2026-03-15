@@ -14,6 +14,7 @@ interface MenuItem {
   image: string;
   category: string;
   isVeg: boolean;
+  taxRate: number;
   offer?: {
     discount_type: 'percent' | 'flat';
     discount_value: number;
@@ -126,6 +127,7 @@ export default function MenuPage() {
           image: item.image_url,
           category: item.category || 'Other',
           isVeg: item.is_veg ?? true,
+          taxRate: item.tax_rate ?? 5,
           offer
         };
       });
@@ -257,30 +259,57 @@ export default function MenuPage() {
     setIsPlacingOrder(true);
 
     try {
-      // 1. CRITICAL: Ensure user is authenticated
+      // 1. Ensure user is authenticated
       const { data: { user } } = await supabase.auth.getUser();
 
       if (!user) {
         throw new Error('Please login to place order');
       }
 
-      // 2. Fetch restaurant settings for tax calculation
-      const { data: settingsData, error: settingsError } = await supabase
+      // 2. Fetch restaurant settings
+      const { data: settingsData } = await supabase
         .from('restaurant_settings')
-        .select('gst_percent, service_charge_percent, tax_enabled')
+        .select('gst_enabled, gst_percent, service_charge_percent, tax_enabled, invoice_prefix, currency_symbol')
+        .limit(1)
         .single();
 
-      if (settingsError) {
-        console.warn('No settings found, using defaults');
-      }
+      const gstEnabled = settingsData?.gst_enabled ?? true;
+      const servicePercent = settingsData?.service_charge_percent ?? 0;
+      const invoicePrefix = settingsData?.invoice_prefix || 'INV';
 
-      const gstPercent = settingsData?.gst_percent || 10;
-      const servicePercent = settingsData?.service_charge_percent || 0;
-      const taxEnabled = settingsData?.tax_enabled ?? true;
+      // 3. Calculate per-item taxes
+      const subtotal = cart.reduce((sum, item) => {
+        const itemPrice = item.offer
+          ? Math.max(0, item.price - (item.offer.discount_type === 'percent'
+            ? (item.price * item.offer.discount_value) / 100
+            : item.offer.discount_value))
+          : item.price;
+        return sum + itemPrice * item.quantity;
+      }, 0);
 
-      const subtotal = totalPrice;
+      let taxTotal = 0;
+      const orderItemsPayload = cart.map((item) => {
+        const effectivePrice = item.offer
+          ? Math.max(0, item.price - (item.offer.discount_type === 'percent'
+            ? (item.price * item.offer.discount_value) / 100
+            : item.offer.discount_value))
+          : item.price;
+        const itemTax = gstEnabled ? (effectivePrice * item.quantity * (item.taxRate || 0) / 100) : 0;
+        taxTotal += itemTax;
+        return {
+          menu_item_id: item.id,
+          item_name: item.name,
+          quantity: item.quantity,
+          unit_price: effectivePrice,
+          tax_rate: item.taxRate || 0,
+          tax_amount: parseFloat(itemTax.toFixed(2)),
+        };
+      });
 
-      // Fetch and apply bill offer
+      const cgst = parseFloat((taxTotal / 2).toFixed(2));
+      const sgst = parseFloat((taxTotal / 2).toFixed(2));
+
+      // 4. Fetch and apply bill discount
       const { data: billOfferData } = await supabase
         .from('bill_offers')
         .select('*')
@@ -289,20 +318,24 @@ export default function MenuPage() {
         .lte('start_date', new Date().toISOString())
         .single();
 
-      let billDiscount = 0;
+      let discountAmount = 0;
       if (billOfferData && subtotal >= billOfferData.min_order_value) {
-        billDiscount = billOfferData.discount_type === 'percent'
+        discountAmount = billOfferData.discount_type === 'percent'
           ? (subtotal * billOfferData.discount_value) / 100
           : billOfferData.discount_value;
       }
 
-      const subtotalAfterBillDiscount = subtotal - billDiscount;
+      // 5. Service charge on subtotal after discount
+      const afterDiscount = subtotal - discountAmount;
+      const serviceCharge = gstEnabled ? parseFloat((afterDiscount * servicePercent / 100).toFixed(2)) : 0;
 
-      const gstAmount = taxEnabled ? (subtotalAfterBillDiscount * (gstPercent / 100)) : 0;
-      const serviceAmount = taxEnabled ? (subtotalAfterBillDiscount * (servicePercent / 100)) : 0;
-      const finalTotal = subtotalAfterBillDiscount + gstAmount + serviceAmount;
+      // 6. Final total
+      const finalTotal = parseFloat((afterDiscount + taxTotal + serviceCharge).toFixed(2));
 
-      // 3. Fetch a valid chef_id
+      // 7. Generate invoice number
+      const invoiceNumber = `${invoicePrefix}-${Date.now().toString(36).toUpperCase()}`;
+
+      // 8. Fetch a valid chef_id
       const { data: chefData, error: chefError } = await supabase
         .from('menus')
         .select('chef_id')
@@ -313,7 +346,7 @@ export default function MenuPage() {
         throw new Error('System Error: No available chef found.');
       }
 
-      // 4. Insert Order with payment fields
+      // 9. Insert Order
       const { data: orderData, error: orderError } = await supabase
         .from('orders')
         .insert([
@@ -321,6 +354,13 @@ export default function MenuPage() {
             table_number: tableNumber,
             status: 'received',
             total_amount: finalTotal,
+            subtotal: parseFloat(subtotal.toFixed(2)),
+            discount_amount: parseFloat(discountAmount.toFixed(2)),
+            tax_total: parseFloat(taxTotal.toFixed(2)),
+            cgst,
+            sgst,
+            service_charge: serviceCharge,
+            invoice_number: invoiceNumber,
             chef_id: chefData.chef_id,
             special_instructions: specialInstructions || null,
             user_id: user?.id || null,
@@ -336,21 +376,19 @@ export default function MenuPage() {
 
       const orderId = orderData.id;
 
-      // 5. Insert Order Items
-      const orderItems = cart.map((item) => ({
+      // 10. Insert Order Items with tax snapshots
+      const itemsWithOrderId = orderItemsPayload.map((item) => ({
+        ...item,
         order_id: orderId,
-        menu_item_id: item.id,
-        quantity: item.quantity,
-        unit_price: item.price,
       }));
 
       const { error: itemsError } = await supabase
         .from('order_items')
-        .insert(orderItems);
+        .insert(itemsWithOrderId);
 
       if (itemsError) throw itemsError;
 
-      // 6. Save to localStorage & Redirect
+      // 11. Save to localStorage & Redirect
       const activeOrder = {
         id: orderId,
         tableNumber,
