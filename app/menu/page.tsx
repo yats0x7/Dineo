@@ -252,7 +252,7 @@ export default function MenuPage() {
     }
   };
 
-  const placeOrder = async () => {
+  const placeOrder = async (paymentMethod: 'online' | 'cash', paymentStatus: 'paid' | 'unpaid') => {
     if (!tableNumber) return;
     setIsPlacingOrder(true);
 
@@ -261,7 +261,6 @@ export default function MenuPage() {
       const { data: { user } } = await supabase.auth.getUser();
 
       if (!user) {
-        // This shouldn't happen if flow is correct, but safety check
         throw new Error('Please login to place order');
       }
 
@@ -279,11 +278,9 @@ export default function MenuPage() {
       const servicePercent = settingsData?.service_charge_percent || 0;
       const taxEnabled = settingsData?.tax_enabled ?? true;
 
-      // 3. Calculate with proper order: item discounts → bill offer → tax
-      // Step 1 & 2: Already calculated in itemsWithDiscounts (totalPrice = subtotal after item discounts)
       const subtotal = totalPrice;
 
-      // Step 3: Fetch and apply bill offer
+      // Fetch and apply bill offer
       const { data: billOfferData } = await supabase
         .from('bill_offers')
         .select('*')
@@ -301,12 +298,11 @@ export default function MenuPage() {
 
       const subtotalAfterBillDiscount = subtotal - billDiscount;
 
-      // Step 4: Apply tax to final amount
       const gstAmount = taxEnabled ? (subtotalAfterBillDiscount * (gstPercent / 100)) : 0;
       const serviceAmount = taxEnabled ? (subtotalAfterBillDiscount * (servicePercent / 100)) : 0;
       const finalTotal = subtotalAfterBillDiscount + gstAmount + serviceAmount;
 
-      // 3. Fetch a valid chef_id to satisfy DB constraint
+      // 3. Fetch a valid chef_id
       const { data: chefData, error: chefError } = await supabase
         .from('menus')
         .select('chef_id')
@@ -314,10 +310,10 @@ export default function MenuPage() {
         .single();
 
       if (chefError || !chefData?.chef_id) {
-        throw new Error('System Error: No available chef found (RLS or empty table).');
+        throw new Error('System Error: No available chef found.');
       }
 
-      // 4. Insert Order
+      // 4. Insert Order with payment fields
       const { data: orderData, error: orderError } = await supabase
         .from('orders')
         .insert([
@@ -327,7 +323,9 @@ export default function MenuPage() {
             total_amount: finalTotal,
             chef_id: chefData.chef_id,
             special_instructions: specialInstructions || null,
-            user_id: user?.id || null, // Link to authenticated user if exists
+            user_id: user?.id || null,
+            payment_method: paymentMethod,
+            payment_status: paymentStatus,
           },
         ])
         .select()
@@ -359,6 +357,8 @@ export default function MenuPage() {
         status: 'received',
         totalPrice: finalTotal,
         items: cart,
+        paymentMethod,
+        paymentStatus,
         timestamp: new Date().toISOString()
       };
 
@@ -720,19 +720,44 @@ export default function MenuPage() {
                   </div>
                 </div>
 
-                {/* Place Order Button or Offline Warning */}
+                {/* Payment Options */}
                 {isOffline ? (
                   <div className="w-full rounded-xl bg-destructive/10 p-3 text-center text-destructive font-bold border border-destructive/20">
                     ⚠️ You are offline. Check connection.
                   </div>
                 ) : (
-                  <button
-                    onClick={placeOrder}
-                    disabled={cart.length === 0 || isPlacingOrder}
-                    className="w-full rounded-lg bg-primary px-4 py-3 font-bold text-primary-foreground transition-transform hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isPlacingOrder ? 'Placing Order...' : 'Place Order'}
-                  </button>
+                  <div className="space-y-3">
+                    <button
+                      onClick={() => {
+                        const amountInPaise = Math.round(totalPrice * 1.1 * 100);
+                        const options = {
+                          key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || 'rzp_test_yourkeyhere',
+                          amount: amountInPaise,
+                          currency: 'INR',
+                          name: 'Dineo',
+                          description: `Order for Table #${tableNumber}`,
+                          handler: function () {
+                            placeOrder('online', 'paid');
+                          },
+                          prefill: {},
+                          theme: { color: '#D4A574' },
+                        };
+                        const rzp = new (window as any).Razorpay(options);
+                        rzp.open();
+                      }}
+                      disabled={cart.length === 0 || isPlacingOrder}
+                      className="w-full rounded-lg bg-primary px-4 py-3 font-bold text-primary-foreground transition-transform hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isPlacingOrder ? 'Processing...' : '💳 Pay Now'}
+                    </button>
+                    <button
+                      onClick={() => placeOrder('cash', 'unpaid')}
+                      disabled={cart.length === 0 || isPlacingOrder}
+                      className="w-full rounded-lg border-2 border-border bg-secondary px-4 py-3 font-bold text-foreground transition-transform hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isPlacingOrder ? 'Processing...' : '💵 Pay Later (Cash)'}
+                    </button>
+                  </div>
                 )}
 
                 {/* Reset Session - kept separate, below order button */}
