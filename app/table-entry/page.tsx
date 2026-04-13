@@ -1,20 +1,52 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, Suspense, useRef } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { supabase } from '../../lib/supabase/client';
 
-export default function TableEntry() {
+function TableEntryContent() {
   const [tableNumber, setTableNumber] = useState('');
   const [error, setError] = useState('');
+  const [logoUrl, setLogoUrl] = useState('');
+  const [restaurantName, setRestaurantName] = useState('Dineo');
+  const [restaurantId, setRestaurantId] = useState<string | null>(null);
   const router = useRouter();
-
+  const searchParams = useSearchParams();
+  const hasRedirected = useRef(false);
 
   useEffect(() => {
+    async function fetchSettings() {
+      const { data } = await supabase.from('restaurant_settings').select('restaurant_id, logo_url, restaurant_name').limit(1).single();
+      if (data) {
+        if (data.logo_url) setLogoUrl(data.logo_url);
+        if (data.restaurant_name) setRestaurantName(data.restaurant_name);
+        if (data.restaurant_id) setRestaurantId(data.restaurant_id);
+      }
+    }
+    fetchSettings();
+  }, []);
+
+  useEffect(() => {
+    if (hasRedirected.current) return;
+
+    // Only redirect if we have a restaurant_id stored (or can store one)
+    const storedRestId = localStorage.getItem('dineo_restaurant_id');
+
+    const tableParam = searchParams.get('table');
+    if (tableParam && storedRestId) {
+      hasRedirected.current = true;
+      setTableNumber(tableParam);
+      localStorage.setItem('dineo_table_number', tableParam);
+      router.push('/menu');
+      return;
+    }
+
     const storedTable = localStorage.getItem('dineo_table_number');
-    if (storedTable) {
+    if (storedTable && storedRestId) {
+      hasRedirected.current = true;
       router.push('/menu');
     }
-  }, []);
+  }, [searchParams, router]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,19 +57,29 @@ export default function TableEntry() {
       return;
     }
 
+    if (!restaurantId) {
+      setError('Unable to find restaurant. Please try again.');
+      return;
+    }
+
     localStorage.setItem('dineo_table_number', tableNumber);
+    localStorage.setItem('dineo_restaurant_id', restaurantId);
     router.push('/menu');
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary/10 to-secondary flex flex-col items-center justify-center p-4">
       {/* Logo */}
-      <div className="mb-8 text-center">
-        <div className="inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground text-2xl font-bold mb-4">
-          D
-        </div>
-        <h1 className="text-3xl font-bold text-foreground mb-2">Dineo</h1>
-        <p className="text-muted-foreground">Welcome to The Golden Fork</p>
+      <div className="mb-8 text-center flex flex-col items-center">
+        {logoUrl ? (
+          <img src={logoUrl} alt="Logo" className="mb-4 h-24 w-auto object-contain" />
+        ) : (
+          <div className="inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground text-2xl font-bold mb-4">
+            {restaurantName.charAt(0)}
+          </div>
+        )}
+        <h1 className="text-3xl font-bold text-foreground mb-2">{restaurantName}</h1>
+        <p className="text-muted-foreground">Welcome to {restaurantName}</p>
       </div>
 
       {/* Form Card */}
@@ -94,4 +136,12 @@ export default function TableEntry() {
       </div>
     </div>
   );
+}
+
+export default function TableEntry() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-gradient-to-br from-primary/10 to-secondary flex items-center justify-center p-4">Loading...</div>}>
+      <TableEntryContent />
+    </Suspense>
+  )
 }

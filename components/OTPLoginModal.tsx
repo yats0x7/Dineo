@@ -8,11 +8,12 @@ interface OTPLoginModalProps {
     isOpen: boolean;
     onClose: () => void;
     onSuccess: (userId: string) => void;
+    onGuestCheckout?: () => void;
 }
 
 type Step = 'phone' | 'otp';
 
-export function OTPLoginModal({ isOpen, onClose, onSuccess }: OTPLoginModalProps) {
+export function OTPLoginModal({ isOpen, onClose, onSuccess, onGuestCheckout }: OTPLoginModalProps) {
     const [step, setStep] = useState<Step>('phone');
     const [phoneNumber, setPhoneNumber] = useState('');
     const [otp, setOtp] = useState('');
@@ -228,6 +229,18 @@ export function OTPLoginModal({ isOpen, onClose, onSuccess }: OTPLoginModalProps
                                     'Send OTP'
                                 )}
                             </button>
+
+                            {onGuestCheckout && (
+                                <div className="mt-4 text-center">
+                                    <span className="text-sm text-muted-foreground mr-2">Don't want to register?</span>
+                                    <button
+                                        onClick={onGuestCheckout}
+                                        className="text-sm font-bold text-primary hover:underline"
+                                    >
+                                        Continue as Guest
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     ) : (
                         <div className="space-y-4">

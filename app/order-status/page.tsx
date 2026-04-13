@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Check, Clock, ChefHat } from 'lucide-react';
 import { supabase } from '../../lib/supabase/client';
 
 interface Order {
   id: string;
+  short_id?: string | null;
   tableNumber: string;
   items: any[];
   totalPrice: number;
@@ -14,16 +15,26 @@ interface Order {
   timestamp: string;
 }
 
+// Helper function to format Indian currency
+const formatPrice = (price: number) => {
+  return new Intl.NumberFormat('en-IN', {
+    maximumFractionDigits: price % 1 === 0 ? 0 : 2,
+    minimumFractionDigits: price % 1 === 0 ? 0 : 2
+  }).format(price);
+};
+
 export default function OrderStatusPage() {
   const [order, setOrder] = useState<Order | null>(null);
   const [currentStatus, setCurrentStatus] = useState<'received' | 'preparing' | 'ready' | 'completed'>('received');
   const router = useRouter();
+  const routerRef = useRef(router);
+  routerRef.current = router;
 
   useEffect(() => {
     // 1. Get saved order context
     const stored = localStorage.getItem('dineo_active_order');
     if (!stored || stored === 'null') {
-      router.push('/');
+      routerRef.current.push('/');
       return;
     }
 
@@ -83,11 +94,20 @@ export default function OrderStatusPage() {
         }
       });
 
+    // Reconnect handler — refetch immediately when network is restored
+    const handleNetworkRestore = () => {
+      console.log('🔄 Network restored, refreshing order status...');
+      fetchLatestStatus();
+    };
+    window.addEventListener('online', handleNetworkRestore);
+
     return () => {
       clearInterval(pollingInterval);
       supabase.removeChannel(channel);
+      window.removeEventListener('online', handleNetworkRestore);
     };
-  }, [router]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (!order) return null;
 
@@ -107,7 +127,7 @@ export default function OrderStatusPage() {
           {/* Order ID */}
           <div className="text-center mb-8">
             <p className="text-muted-foreground text-sm uppercase tracking-wider">Order Number</p>
-            <p className="text-2xl font-bold text-foreground mt-1">{order.id.slice(0, 8) + '...'}</p>
+            <p className="text-2xl font-bold text-foreground mt-1">{order.short_id || order.id.slice(0, 8)}</p>
             <p className="text-muted-foreground text-sm mt-2">Table #{order.tableNumber}</p>
           </div>
 
@@ -175,13 +195,13 @@ export default function OrderStatusPage() {
             {currentStatus === 'preparing' && (
               <div>
                 <p className="text-sm text-muted-foreground">🍳 Your order is being prepared!</p>
-                <p className="text-lg font-bold text-foreground mt-1">~10 minutes remaining</p>
+                <p className="text-lg font-bold text-foreground mt-1">Estimated wait time: ~10-15 minutes</p>
               </div>
             )}
             {currentStatus === 'ready' && (
               <div>
-                <p className="text-lg font-bold text-primary">✅ Your order is ready for pickup!</p>
-                <p className="text-sm text-muted-foreground mt-1">Please collect from counter</p>
+                <p className="text-lg font-bold text-primary">✅ Ready to Serve!</p>
+                <p className="text-sm text-muted-foreground mt-1">We will bring it to your table shortly.</p>
               </div>
             )}
             {currentStatus === 'completed' && (
@@ -203,7 +223,7 @@ export default function OrderStatusPage() {
                   {item.name} x{item.quantity}
                 </span>
                 <span className="font-semibold text-foreground">
-                  ₹{(item.price * item.quantity).toFixed(2)}
+                  ₹{formatPrice(item.price * item.quantity)}
                 </span>
               </div>
             ))}
@@ -211,7 +231,7 @@ export default function OrderStatusPage() {
           <div className="border-t border-border pt-3">
             <div className="flex justify-between font-bold">
               <span>Total:</span>
-              <span className="text-primary">₹{order.totalPrice.toFixed(2)}</span>
+              <span className="text-primary">₹{formatPrice(order.totalPrice)}</span>
             </div>
           </div>
         </div>
@@ -250,12 +270,14 @@ export default function OrderStatusPage() {
 
         {/* While cooking/received - allow adding more items */}
         {(currentStatus === 'received' || currentStatus === 'preparing') && (
-          <button
-            onClick={() => router.push('/menu')}
-            className="w-full rounded-lg bg-secondary px-4 py-3 font-bold text-foreground transition-transform hover:scale-105 active:scale-95"
-          >
-            Add More Items
-          </button>
+          <div className="flex justify-center mt-2">
+            <button
+              onClick={() => router.push('/menu')}
+              className="text-primary font-medium hover:underline flex items-center gap-1 p-2 transition-colors"
+            >
+              ← Browse Menu
+            </button>
+          </div>
         )}
       </div>
     </div>

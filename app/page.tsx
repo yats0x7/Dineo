@@ -1,12 +1,16 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 export default function HomePage() {
   const router = useRouter();
+  const hasRedirected = useRef(false);
 
   useEffect(() => {
+    if (hasRedirected.current) return;
+    hasRedirected.current = true;
+
     // Check for active order first - highest priority
     const activeOrder = localStorage.getItem('dineo_active_order');
     if (activeOrder && activeOrder !== 'null') {
@@ -21,7 +25,7 @@ export default function HomePage() {
     } else {
       router.push('/table-entry');
     }
-  }, []);
+  }, [router]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary/10 to-secondary flex flex-col items-center justify-center p-4">
